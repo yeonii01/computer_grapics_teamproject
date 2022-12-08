@@ -1,9 +1,16 @@
 #define _CRT_SECURE_NO_WARNINGS
+#pragma comment(lib, "glew32.lib")
+#pragma comment(lib, "freeglut.lib")
 #include <iostream>
 #include <Windows.h>
 #include <mmsystem.h>
 #include <time.h>
 #include <random>
+#include <fstream>
+#include <sstream>
+#include <string>
+#include <cstdlib>
+#include <vector>
 #include <gl/glew.h>
 #include <gl/freeglut.h>
 #include <gl/freeglut_ext.h>
@@ -19,11 +26,11 @@
 
 using namespace std;
 
-random_device rd;
-default_random_engine dre(rd());
+default_random_engine dre;
 uniform_real_distribution<float>uid(0, 1);
-uniform_real_distribution<float>snowpos(-1, 1);
+uniform_real_distribution<float>snowpos(-1, 1);		// ëˆˆ ìœ„ì¹˜
 uniform_real_distribution<float>speed(0.001, 0.1);
+uniform_real_distribution<float>roadlength(0.1, 0.35);
 
 void make_vertexShaders();
 void make_fragmentShaders();
@@ -32,6 +39,7 @@ GLvoid InitBuffer();
 GLchar* filetobuf(const char* file);
 void InitShader();
 void ReadObj(FILE* objFile);
+void ReadObj2(string file, vector<glm::vec3>& vertexInfo);
 void keyboard(unsigned char, int, int);
 void Mouse(int button, int state, int x, int y);
 void Motion(int x, int y);
@@ -45,6 +53,8 @@ GLint width, height;
 
 GLuint vertexShader;
 GLuint fragmentShader;
+
+GLuint cubeVAO, cubeVBO;
 
 GLuint VAO, VBO[3];
 
@@ -126,30 +136,41 @@ FILE* FL;
 void vectoplane(Plane* p);
 void planecolorset(Plane* p, int a);
 
-//½ÇÁúÀûÀ¸·Î »ç¿ëÇÏ´Â º¯¼öµé ±â·Ï
-GLUquadricObj* whead, * wbody; //´«»ç¶÷ ¼±¾ğ
-GLUquadricObj* snow[100]; //´«
-XZ snowposxz[100];
+vector<glm::vec3> vvertex;
+vector<glm::vec3> vcolor;
+vector<glm::ivec3> vface;
 
-Plane* screen;		// ½ÃÀÛÈ­¸é
-Plane* Road[400];	//±æ
-Plane* Tree[100];	//tree
+//ì‹¤ì§ˆì ìœ¼ë¡œ ì‚¬ìš©í•˜ëŠ” ë³€ìˆ˜ë“¤ ê¸°ë¡
+GLUquadricObj* whead, * wbody; //ëˆˆì‚¬ëŒ ì„ ì–¸
+GLUquadricObj* snow[100]; //ëˆˆ
+XZ snowposxz[100];		  // ëˆˆ
 
-float light = 1.0; //ºû ¹éÅ¹
-float turnY = 0; //
-float zsize = 0.7; //
+Plane* Screen;		// ì‹œì‘í™”ë©´
+Plane* Road[100];	//ê¸¸
+Plane* Tree[2];		//tree
+Plane* Hat;			// ëª¨ì
 
-float rxsize = 0.07f; //±æÀÇ Æø/2ÇÑ °ª
-XZ saveroad[400]; //±æ ±â·Ï¿ë
+float light = 1.0;	//ë¹› ë°±íƒ
+
+float rxsize = 0.083f;	//ê¸¸ì˜ í­/2í•œ ê°’
+float rzsize[100];
+float rxsize2 = 0.083f;	//ê¸¸ì˜ í­/2í•œ ê°’
+float rzsize2[100];
+
+XZ saveroad[100]; //ê¸¸ ê¸°ë¡ìš©
+
+XZ lEffect; // ì™¼ìª½ ì´í™íŠ¸ ê¸°ë¡ìš©
+XZ rEffect; // ì˜¤ë¥¸ìª½ ì´í™íŠ¸ ê¸°ë¡ìš©
 
 int jumpcount = 0;
-const int snowsize = 30;				// ´« °³¼ö
-float snowx = 0.0f, snowz = 0.0f;		// ÇöÀç ´«»ç¶÷ À§Ä¡ yÃà ÀÌµ¿X ³ªÁß¿¡ Á¡ÇÁ Ãß°¡ÇÒ¶§ Ãß°¡
-//float lightx = -0.5f, lightz = 0.0f;		// Á¶¸í À§Ä¡
+const int snowsize = 30;				// ëˆˆ ê°œìˆ˜
+float snowx = 0.0f, snowy =0.035f, snowz = 0.0f;		// í˜„ì¬ ëˆˆì‚¬ëŒ ìœ„ì¹˜ yì¶• ì´ë™X ë‚˜ì¤‘ì— ì í”„ ì¶”ê°€í• ë•Œ ì¶”ê°€
+//float lightx = -0.5f, lightz = 0.0f;		// ì¡°ëª… ìœ„ì¹˜
 bool leftright = false;
-bool Sscreen = true;			// ½ÃÀÛÈ­¸é ¸¸µé¶§
-bool music = false;				// ³ë·¡ ½ÃÀÛµÇ¸é¼­ ÇÃ·¹ÀÌ ½ÃÀÛ(¾ÆÁ÷ ½ÃÀÛÈ­¸é ¹Ì¿Ï¼ºÀ¸·Î ÀÌ°É·Î ´ëÃ¼)
-bool jump = false;
+bool Sscreen = true;			// ì‹œì‘í™”ë©´ ë§Œë“¤ë•Œ
+bool music = false;				// ë…¸ë˜ ì‹œì‘ë˜ë©´ì„œ í”Œë ˆì´ ì‹œì‘(ì•„ì§ ì‹œì‘í™”ë©´ ë¯¸ì™„ì„±ìœ¼ë¡œ ì´ê±¸ë¡œ ëŒ€ì²´)
+bool bjump = false;				// ì í”„
+bool cameracheck = false;
 
 void make_vertexShaders()
 {
@@ -167,7 +188,7 @@ void make_vertexShaders()
 	if (!result)
 	{
 		glGetShaderInfoLog(vertexShader, 512, NULL, errorLog);
-		cerr << "ERROR: vertex shader ÄÄÆÄÀÏ ½ÇÆĞ\n" << errorLog << endl;
+		cerr << "ERROR: vertex shader ì»´íŒŒì¼ ì‹¤íŒ¨\n" << errorLog << endl;
 		exit(-1);
 	}
 }
@@ -186,7 +207,7 @@ void make_fragmentShaders()
 	if (!result)
 	{
 		glGetShaderInfoLog(fragmentShader, 512, NULL, errorLog);
-		cerr << "ERROR: fragment shader ÄÄÆÄÀÏ ½ÇÆĞ\n" << errorLog << endl;
+		cerr << "ERROR: fragment shader ì»´íŒŒì¼ ì‹¤íŒ¨\n" << errorLog << endl;
 		exit(-1);
 	}
 }
@@ -196,50 +217,56 @@ GLuint make_shaderProgram()
 	GLint result;
 	GLchar errorLog[512];
 	GLuint ShaderProgramID;
-	ShaderProgramID = glCreateProgram(); //--- ¼¼ÀÌ´õ ÇÁ·Î±×·¥ ¸¸µé±â
-	glAttachShader(ShaderProgramID, vertexShader); //--- ¼¼ÀÌ´õ ÇÁ·Î±×·¥¿¡ ¹öÅØ½º ¼¼ÀÌ´õ ºÙÀÌ±â
-	glAttachShader(ShaderProgramID, fragmentShader); //--- ¼¼ÀÌ´õ ÇÁ·Î±×·¥¿¡ ÇÁ·¡±×¸ÕÆ® ¼¼ÀÌ´õ ºÙÀÌ±â
-	glLinkProgram(ShaderProgramID); //--- ¼¼ÀÌ´õ ÇÁ·Î±×·¥ ¸µÅ©ÇÏ±â
+	ShaderProgramID = glCreateProgram(); //--- ì„¸ì´ë” í”„ë¡œê·¸ë¨ ë§Œë“¤ê¸°
+	glAttachShader(ShaderProgramID, vertexShader); //--- ì„¸ì´ë” í”„ë¡œê·¸ë¨ì— ë²„í…ìŠ¤ ì„¸ì´ë” ë¶™ì´ê¸°
+	glAttachShader(ShaderProgramID, fragmentShader); //--- ì„¸ì´ë” í”„ë¡œê·¸ë¨ì— í”„ë˜ê·¸ë¨¼íŠ¸ ì„¸ì´ë” ë¶™ì´ê¸°
+	glLinkProgram(ShaderProgramID); //--- ì„¸ì´ë” í”„ë¡œê·¸ë¨ ë§í¬í•˜ê¸°
 
-	glDeleteShader(vertexShader); //--- ¼¼ÀÌ´õ °´Ã¼¸¦ ¼¼ÀÌ´õ ÇÁ·Î±×·¥¿¡ ¸µÅ©ÇßÀ½À¸·Î, ¼¼ÀÌ´õ °´Ã¼ ÀÚÃ¼´Â »èÁ¦ °¡´É
+	glDeleteShader(vertexShader); //--- ì„¸ì´ë” ê°ì²´ë¥¼ ì„¸ì´ë” í”„ë¡œê·¸ë¨ì— ë§í¬í–ˆìŒìœ¼ë¡œ, ì„¸ì´ë” ê°ì²´ ìì²´ëŠ” ì‚­ì œ ê°€ëŠ¥
 	glDeleteShader(fragmentShader);
 
-	glGetProgramiv(ShaderProgramID, GL_LINK_STATUS, &result); // ---¼¼ÀÌ´õ°¡ Àß ¿¬°áµÇ¾ú´ÂÁö Ã¼Å©ÇÏ±â
+	glGetProgramiv(ShaderProgramID, GL_LINK_STATUS, &result); // ---ì„¸ì´ë”ê°€ ì˜ ì—°ê²°ë˜ì—ˆëŠ”ì§€ ì²´í¬í•˜ê¸°
 	if (!result) {
 		glGetProgramInfoLog(ShaderProgramID, 512, NULL, errorLog);
-		cerr << "ERROR: shader program ¿¬°á ½ÇÆĞ\n" << errorLog << endl;
+		cerr << "ERROR: shader program ì—°ê²° ì‹¤íŒ¨\n" << errorLog << endl;
 		exit(-1);
 	}
-	glUseProgram(ShaderProgramID); //--- ¸¸µé¾îÁø ¼¼ÀÌ´õ ÇÁ·Î±×·¥ »ç¿ëÇÏ±â
-	//--- ¿©·¯ °³ÀÇ ¼¼ÀÌ´õÇÁ·Î±×·¥ ¸¸µé ¼ö ÀÖ°í, ±× Áß ÇÑ°³ÀÇ ÇÁ·Î±×·¥À» »ç¿ëÇÏ·Á¸é
-	//--- glUseProgram ÇÔ¼ö¸¦ È£ÃâÇÏ¿© »ç¿ë ÇÒ Æ¯Á¤ ÇÁ·Î±×·¥À» ÁöÁ¤ÇÑ´Ù.
-	//--- »ç¿ëÇÏ±â Á÷Àü¿¡ È£ÃâÇÒ ¼ö ÀÖ´Ù.
+	glUseProgram(ShaderProgramID); //--- ë§Œë“¤ì–´ì§„ ì„¸ì´ë” í”„ë¡œê·¸ë¨ ì‚¬ìš©í•˜ê¸°
+	//--- ì—¬ëŸ¬ ê°œì˜ ì„¸ì´ë”í”„ë¡œê·¸ë¨ ë§Œë“¤ ìˆ˜ ìˆê³ , ê·¸ ì¤‘ í•œê°œì˜ í”„ë¡œê·¸ë¨ì„ ì‚¬ìš©í•˜ë ¤ë©´
+	//--- glUseProgram í•¨ìˆ˜ë¥¼ í˜¸ì¶œí•˜ì—¬ ì‚¬ìš© í•  íŠ¹ì • í”„ë¡œê·¸ë¨ì„ ì§€ì •í•œë‹¤.
+	//--- ì‚¬ìš©í•˜ê¸° ì§ì „ì— í˜¸ì¶œí•  ìˆ˜ ìˆë‹¤.
 	return ShaderProgramID;
 }
 
 void InitShader()
 {
-	make_vertexShaders(); //--- ¹öÅØ½º ¼¼ÀÌ´õ ¸¸µé±â
-	make_fragmentShaders(); //--- ÇÁ·¡±×¸ÕÆ® ¼¼ÀÌ´õ ¸¸µé±â
-	shaderID = make_shaderProgram(); //--- ¼¼ÀÌ´õ ÇÁ·Î±×·¥ ¸¸µé±â
+	make_vertexShaders(); //--- ë²„í…ìŠ¤ ì„¸ì´ë” ë§Œë“¤ê¸°
+	make_fragmentShaders(); //--- í”„ë˜ê·¸ë¨¼íŠ¸ ì„¸ì´ë” ë§Œë“¤ê¸°
+	shaderID = make_shaderProgram(); //--- ì„¸ì´ë” í”„ë¡œê·¸ë¨ ë§Œë“¤ê¸°
 }
 
 GLvoid InitBuffer() {
-	//--- VAO °´Ã¼ »ı¼º ¹× ¹ÙÀÎµù
+	//--- VAO ê°ì²´ ìƒì„± ë° ë°”ì¸ë”©
 	glGenVertexArrays(1, &VAO);
-	//--- vertex data ÀúÀåÀ» À§ÇÑ VBO »ı¼º ¹× ¹ÙÀÎµù.
+	//--- vertex data ì €ì¥ì„ ìœ„í•œ VBO ìƒì„± ë° ë°”ì¸ë”©.
 	glGenBuffers(3, VBO);
+
+	//ReadObj2("tree.obj", vvertex);
+	glGenVertexArrays(1, &cubeVAO);
+	glGenBuffers(1, &cubeVBO);
+
+
 }
 
-void main(int argc, char** argv) //--- À©µµ¿ì Ãâ·ÂÇÏ°í Äİ¹éÇÔ¼ö ¼³Á¤ { //--- À©µµ¿ì »ı¼ºÇÏ±â
+void main(int argc, char** argv) //--- ìœˆë„ìš° ì¶œë ¥í•˜ê³  ì½œë°±í•¨ìˆ˜ ì„¤ì • { //--- ìœˆë„ìš° ìƒì„±í•˜ê¸°
 {
 	srand((unsigned int)time(NULL));
-	glutInit(&argc, argv); // glut ÃÊ±âÈ­
-	glutInitDisplayMode(GLUT_DOUBLE | GLUT_RGBA | GLUT_DEPTH); // µğ½ºÇÃ·¹ÀÌ ¸ğµå ¼³Á¤
-	glutInitWindowPosition(0, 0); // À©µµ¿ìÀÇ À§Ä¡ ÁöÁ¤
-	glutInitWindowSize(WINDOWX, WINDOWY); // À©µµ¿ìÀÇ Å©±â ÁöÁ¤
-	glutCreateWindow("Example6");// À©µµ¿ì »ı¼º	(À©µµ¿ì ÀÌ¸§)
-	//--- GLEW ÃÊ±âÈ­ÇÏ±â
+	glutInit(&argc, argv); // glut ì´ˆê¸°í™”
+	glutInitDisplayMode(GLUT_DOUBLE | GLUT_RGBA | GLUT_DEPTH); // ë””ìŠ¤í”Œë ˆì´ ëª¨ë“œ ì„¤ì •
+	glutInitWindowPosition(0, 0); // ìœˆë„ìš°ì˜ ìœ„ì¹˜ ì§€ì •
+	glutInitWindowSize(WINDOWX, WINDOWY); // ìœˆë„ìš°ì˜ í¬ê¸° ì§€ì •
+	glutCreateWindow("Example6");// ìœˆë„ìš° ìƒì„±	(ìœˆë„ìš° ì´ë¦„)
+	//--- GLEW ì´ˆê¸°í™”í•˜ê¸°
 	glewExperimental = GL_TRUE;
 	glewInit();
 
@@ -248,12 +275,12 @@ void main(int argc, char** argv) //--- À©µµ¿ì Ãâ·ÂÇÏ°í Äİ¹éÇÔ¼ö ¼³Á¤ { //--- À©µ
 
 	glutKeyboardFunc(keyboard);
 	glutTimerFunc(5, TimerFunction, 1);
-	glutDisplayFunc(drawScene); //--- Ãâ·Â Äİ¹é ÇÔ¼ö
+	glutDisplayFunc(drawScene); //--- ì¶œë ¥ ì½œë°± í•¨ìˆ˜
 	glutReshapeFunc(Reshape);
 	glutMainLoop();
 }
 
-GLvoid drawScene() //--- Äİ¹é ÇÔ¼ö: ±×¸®±â Äİ¹é ÇÔ¼ö 
+GLvoid drawScene() //--- ì½œë°± í•¨ìˆ˜: ê·¸ë¦¬ê¸° ì½œë°± í•¨ìˆ˜ 
 {
 	if (start) {
 		start = FALSE;
@@ -266,7 +293,7 @@ GLvoid drawScene() //--- Äİ¹é ÇÔ¼ö: ±×¸®±â Äİ¹é ÇÔ¼ö
 		//	vectoplane(screen);
 		//	planecolorset(screen, 0);
 		//}
-		for (int i = 0; i < 10; ++i) {
+		for (int i = 0; i < 80; ++i) {
 			FL = fopen("cube.obj", "rt");
 			ReadObj(FL);
 			fclose(FL);
@@ -274,51 +301,70 @@ GLvoid drawScene() //--- Äİ¹é ÇÔ¼ö: ±×¸®±â Äİ¹é ÇÔ¼ö
 			vectoplane(Road[i]);
 			planecolorset(Road[i], 0);
 		}
-		for (int i = 0; i < 50; ++i) {
+		
+		FL = fopen("cube.obj", "rt");
+		ReadObj(FL);
+		fclose(FL);
+		Tree[0] = (Plane*)malloc(sizeof(Plane) * faceNum);
+		vectoplane(Tree[0]);
+		planecolorset(Tree[0], 0);		
+
+		FL = fopen("Pyramid.obj", "rt");
+		ReadObj(FL);
+		fclose(FL);
+		Tree[1] = (Plane*)malloc(sizeof(Plane) * faceNum);
+		vectoplane(Tree[1]);
+		planecolorset(Tree[1], 1);
+		whead = gluNewQuadric();
+		wbody = gluNewQuadric();
+
+		FL = fopen("Pyramid.obj", "rt");
+		ReadObj(FL);
+		fclose(FL);
+		Hat = (Plane*)malloc(sizeof(Plane) * faceNum);
+		vectoplane(Hat);
+		planecolorset(Hat, 0);
+
+		for (int i = 0; i < 20; ++i) {
 			FL = fopen("cube.obj", "rt");
 			ReadObj(FL);
 			fclose(FL);
-			Tree[i] = (Plane*)malloc(sizeof(Plane) * faceNum);
-			vectoplane(Tree[i]);
-			planecolorset(Tree[i], 0);
+			Road[i] = (Plane*)malloc(sizeof(Plane) * faceNum);
+			vectoplane(Road[i]);
+			planecolorset(Road[i], 0);
 		}
-		for (int i = 50; i < 100; ++i) {
-			FL = fopen("Pyramid.obj", "rt");
-			ReadObj(FL);
-			fclose(FL);
-			Tree[i] = (Plane*)malloc(sizeof(Plane) * faceNum);
-			vectoplane(Tree[i]);
-			planecolorset(Tree[i], 1);
-		}
-		whead = gluNewQuadric();
-		wbody = gluNewQuadric();
+
 		for (int i = 0; i < 100; ++i) {
 			snow[i] = gluNewQuadric();
 			snowposxz[i].x = snowx + snowpos(dre);
+			
 			snowposxz[i].z = snowz + snowpos(dre);
 			snowposxz[i].speed = speed(dre);
+			rzsize[i] = roadlength(dre);
 		}
-	} // ÃÊ±âÈ­ÇÒ µ¥ÀÌÅÍ
+
+	} // ì´ˆê¸°í™”í•  ë°ì´í„°
 
 	glEnable(GL_DEPTH_TEST);
 
 	InitShader();
 
 	glClearColor(BackGround[0], BackGround[1], BackGround[2], 1.0f);
-	glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT); 	//¹è°æ
+	glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT); 	//ë°°ê²½
 
 	glUseProgram(shaderID);
-	glBindVertexArray(VAO);// ½¦ÀÌ´õ , ¹öÆÛ ¹è¿­ »ç¿ë
+	glBindVertexArray(VAO);// ì‰ì´ë” , ë²„í¼ ë°°ì—´ ì‚¬ìš©
 
 	glutInitDisplayMode(GLUT_DOUBLE | GLUT_RGB | GLUT_DEPTH);
 	glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
 	glm::mat4 TR = glm::mat4(1.0f);
 
-	unsigned int vColorLocation = glGetUniformLocation(shaderID, "outColor");//»ö»óº¯°æ
+	unsigned int vColorLocation = glGetUniformLocation(shaderID, "outColor");//ìƒ‰ìƒë³€ê²½
 	unsigned int modelLocation = glGetUniformLocation(shaderID, "model");
 	unsigned int viewLocation = glGetUniformLocation(shaderID, "view");
 	unsigned int projLocation = glGetUniformLocation(shaderID, "projection");
+
 	//if (Sscreen) {
 	//	glm::mat4 Vw = glm::mat4(1.0f);
 	//	glm::vec3 cameraPos = glm::vec3(0.0f, 0.0f,2.0f);
@@ -336,19 +382,24 @@ GLvoid drawScene() //--- Äİ¹é ÇÔ¼ö: ±×¸®±â Äİ¹é ÇÔ¼ö
 	//	glUniformMatrix4fv(viewLocation, 1, GL_FALSE, &Vw[0][0]);
 	//}
 
-	/*glm::mat4 Vw = glm::mat4(1.0f);
-	glm::vec3 cameraPos = glm::vec3(0.0f, 0.0f, 2.0f);
-	glm::vec3 cameraDirection = glm::vec3(0.0f, 0.0f, -2.0f);
-	glm::vec3 cameraUp = glm::vec3(0.0f, 1.0f, 0.0f);
-	Vw = glm::lookAt(cameraPos, cameraDirection, cameraUp);
-	glUniformMatrix4fv(viewLocation, 1, GL_FALSE, &Vw[0][0]);*/
+	// ì¹´ë©”ë¼
+	if (cameracheck){
+		glm::mat4 Vw = glm::mat4(1.0f);
+		glm::vec3 cameraPos = glm::vec3(0.0f, 0.0f, 2.0f);
+		glm::vec3 cameraDirection = glm::vec3(0.0f, 0.0f, -2.0f);
+		glm::vec3 cameraUp = glm::vec3(0.0f, 1.0f, 0.0f);
+		Vw = glm::lookAt(cameraPos, cameraDirection, cameraUp);
+		glUniformMatrix4fv(viewLocation, 1, GL_FALSE, &Vw[0][0]);
+	}
+	else {
+		glm::mat4 Vw = glm::mat4(1.0f);
+		glm::vec3 cameraPos = glm::vec3(snowx + 1.5f, 1.5f, snowz + 1.0f);
+		glm::vec3 cameraDirection = glm::vec3(snowx - 1.5f, -1.5f, snowz - 1.0f);
+		glm::vec3 cameraUp = glm::vec3(0.0f, 1.0f, 0.0f);
+		Vw = glm::lookAt(cameraPos, cameraDirection, cameraUp);
+		glUniformMatrix4fv(viewLocation, 1, GL_FALSE, &Vw[0][0]);
 
-	glm::mat4 Vw = glm::mat4(1.0f);
-	glm::vec3 cameraPos = glm::vec3(snowx + 1.5f, 1.5f, snowz + 1.0f);
-	glm::vec3 cameraDirection = glm::vec3(snowx - 1.5f, -1.5f, snowz - 1.0f);
-	glm::vec3 cameraUp = glm::vec3(0.0f, 1.0f, 0.0f);
-	Vw = glm::lookAt(cameraPos, cameraDirection, cameraUp);
-	glUniformMatrix4fv(viewLocation, 1, GL_FALSE, &Vw[0][0]);
+	}	
 
 	glm::mat4 Pj = glm::mat4(1.0f);
 	Pj = glm::perspective(glm::radians(45.0f), (float)WINDOWX / (float)WINDOWY, 0.1f, 100.0f);
@@ -359,12 +410,12 @@ GLvoid drawScene() //--- Äİ¹é ÇÔ¼ö: ±×¸®±â Äİ¹é ÇÔ¼ö
 	modelLocation = glGetUniformLocation(shaderID, "model");
 	glUniformMatrix4fv(modelLocation, 1, GL_FALSE, glm::value_ptr(TR));
 
-	unsigned int lightPosLocation = glGetUniformLocation(shaderID, "lightPos"); //--- lightPos °ª Àü´Ş: (0.0, 0.0, 5.0);
-	glUniform3f(lightPosLocation, snowx, 5.0f, snowz);
-	unsigned int lightColorLocation = glGetUniformLocation(shaderID, "lightColor"); //--- lightColor °ª Àü´Ş: (1.0, 1.0, 1.0) ¹é»ö
+	int lightPosLocation = glGetUniformLocation(shaderID, "lightPos"); //--- lightPos ê°’ ì „ë‹¬: (0.0, 0.0, 5.0);
+	//glUniform3f(lightPosLocation, snowx, 1.0f, snowz);
+	glUniform3f(lightPosLocation, snowx, 0.5f, snowz - 0.5f);
+	int lightColorLocation = glGetUniformLocation(shaderID, "lightColor"); //--- lightColor ê°’ ì „ë‹¬: (1.0, 1.0, 1.0) ë°±ìƒ‰
 	glUniform3f(lightColorLocation, light, light, light);
 
-	
 	for (int i = 0; i < snowsize; ++i)
 	{
 		TR = glm::mat4(1.0f);
@@ -373,7 +424,7 @@ GLvoid drawScene() //--- Äİ¹é ÇÔ¼ö: ±×¸®±â Äİ¹é ÇÔ¼ö
 		glUniformMatrix4fv(modelLocation, 1, GL_FALSE, glm::value_ptr(TR));
 		glUniform3f(vColorLocation, 1.0f, 1.0f, 1.0f);
 		gluQuadricDrawStyle(wbody, GLU_FILL);
-		gluSphere(snow[i], 1.0, 50, 50); //´« ³»¸®±â
+		gluSphere(snow[i], 1.0, 50, 50); //ëˆˆ ë‚´ë¦¬ê¸°
 	}
 
 	//TR = glm::mat4(1.0f);
@@ -385,7 +436,7 @@ GLvoid drawScene() //--- Äİ¹é ÇÔ¼ö: ±×¸®±â Äİ¹é ÇÔ¼ö
 	//	screen[i].Draw();
 	//}
 
-	//treeÈ®ÀÎ¿ë
+	//treeí™•ì¸ìš©
 	TR = glm::mat4(1.0f);
 	TR = glm::translate(TR, glm::vec3(-0.21f, 0.08f, 0.0f));
 	TR = glm::scale(TR, glm::vec3(0.07f, 0.17f, 0.07f));
@@ -394,173 +445,167 @@ GLvoid drawScene() //--- Äİ¹é ÇÔ¼ö: ±×¸®±â Äİ¹é ÇÔ¼ö
 	for (int i = 0; i < 12; ++i) {
 		Tree[0][i].Bind();
 		Tree[0][i].Draw();
-	}//³ª¹« ¹ØµÕ
+	}//ë‚˜ë¬´ ë°‘ë‘¥
 	TR = glm::mat4(1.0f);
 	TR = glm::translate(TR, glm::vec3(-0.21f, 0.17f, 0.0f));
 	TR = glm::scale(TR, glm::vec3(0.15f, 0.125f, 0.15f));
 	glUniformMatrix4fv(modelLocation, 1, GL_FALSE, glm::value_ptr(TR));
 	glUniform3f(vColorLocation, 0.4f, 0.8f, 0.66f);
 	for (int i = 0; i < 6; ++i) {
-		Tree[50][i].Bind();
-		Tree[50][i].Draw();
-	}//³ª¹« ¸Ó¸® ¹Ø
+		Tree[1][i].Bind();
+		Tree[1][i].Draw();
+	}//ë‚˜ë¬´ ë¨¸ë¦¬ ë°‘
 	TR = glm::mat4(1.0f);
 	TR = glm::translate(TR, glm::vec3(-0.21f, 0.25f, 0.0f));
 	TR = glm::scale(TR, glm::vec3(0.15f, 0.125f, 0.15f));
 	glUniformMatrix4fv(modelLocation, 1, GL_FALSE, glm::value_ptr(TR));
 	glUniform3f(vColorLocation, 0.4f, 0.8f, 0.66f);
 	for (int i = 0; i < 6; ++i) {
-		Tree[50][i].Bind();
-		Tree[50][i].Draw();
-	}//³ª¹« ¸Ó¸® À§
+		Tree[1][i].Bind();
+		Tree[1][i].Draw();
+	}//ë‚˜ë¬´ ë¨¸ë¦¬
 
 	TR = glm::mat4(1.0f);
-	TR = glm::translate(TR, glm::vec3(snowx, 0.035f, snowz));
+	TR = glm::translate(TR, glm::vec3(snowx, snowy, snowz));
 	TR = glm::scale(TR, glm::vec3(0.05f, 0.05f, 0.05f));
 	glUniformMatrix4fv(modelLocation, 1, GL_FALSE, glm::value_ptr(TR));
-	glUniform3f(vColorLocation, 0.5f, 0.5f, 0.9f);
+	glUniform3f(vColorLocation, 1.0f, 0.980392, 0.941176);
 	gluQuadricDrawStyle(wbody, GLU_FILL);
-	gluSphere(wbody, 0.7, 50, 50); //´«»ç¶÷ ¸öÅë
+	gluSphere(wbody, 0.7, 50, 50); //ëˆˆì‚¬ëŒ ëª¸í†µ
+
 	TR = glm::mat4(1.0f);
-	TR = glm::translate(TR, glm::vec3(snowx, 0.08f, snowz));
+	TR = glm::translate(TR, glm::vec3(snowx, snowy+ 0.045, snowz));
 	TR = glm::scale(TR, glm::vec3(0.05f, 0.05f, 0.05f));
 	glUniformMatrix4fv(modelLocation, 1, GL_FALSE, glm::value_ptr(TR));
-	glUniform3f(vColorLocation, 0.5f, 0.5f, 0.9f);
+	glUniform3f(vColorLocation, 1.0f, 0.937255f, 0.835294f);
 	gluQuadricDrawStyle(wbody, GLU_FILL);
-	gluSphere(whead, 0.5, 50, 50); //´«»ç¶÷ ¸Ó¸®
+	gluSphere(whead, 0.5, 50, 50); //ëˆˆì‚¬ëŒ ë¨¸ë¦¬
 
+	TR = glm::mat4(1.0f);
+	TR = glm::translate(TR, glm::vec3(snowx, snowy + 0.083, snowz));
+	//TR = glm::rotate(TR, (float)glm::radians(10.0f), glm::vec3(1.0f, 0.0f, 0.0f));
+	TR = glm::scale(TR, glm::vec3(0.03f, 0.03f, 0.03f));
+	glUniformMatrix4fv(modelLocation, 1, GL_FALSE, glm::value_ptr(TR));
+	glUniform3f(vColorLocation, 1.0, 0.0f, 0.0f);
+	for (int i = 0; i < 6; ++i) {
+		Hat[i].Bind();
+		Hat[i].Draw();
+	}//ëª¨ì 
+	TR = glm::mat4(1.0f);
+	TR = glm::translate(TR, glm::vec3(snowx, snowy + 0.093, snowz));
+	TR = glm::scale(TR, glm::vec3(0.02f, 0.02f, 0.02f));
+	glUniformMatrix4fv(modelLocation, 1, GL_FALSE, glm::value_ptr(TR));
+	glUniform3f(vColorLocation, 1.0f, 1.0f, 1.0f);
+	gluQuadricDrawStyle(wbody, GLU_FILL);
+	gluSphere(whead, 0.5, 50, 50); // ëª¨ì ê½ì§€
 
-	//°¢µµ´Â 0µµ¶û 90µµ ¹İº¹ - Áö±×Àç±×ÀÌ¹Ç·Î
-	//ÄÚµå ±æ ½ÃÀÛ!!!! saveroad ÄÚµåºÎºĞ x¿Í z 0µµÀÏ¶§¶û 90µµÀÏ¶§ ÄÚµå°¡ ´Ù¸§!!
+	TR = glm::mat4(1.0f);
+	TR = glm::translate(TR, glm::vec3(snowx - 0.008, snowy + 0.049, snowz + 0.023));
+	TR = glm::scale(TR, glm::vec3(0.015f, 0.015f, 0.015f));
+	glUniformMatrix4fv(modelLocation, 1, GL_FALSE, glm::value_ptr(TR));
+	glUniform3f(vColorLocation, 0.0f, 0.0f, 0.0f);
+	gluQuadricDrawStyle(wbody, GLU_FILL);
+	gluSphere(whead, 0.2, 50, 50); // ëˆˆ ì™¼
+
+	TR = glm::mat4(1.0f);
+	TR = glm::translate(TR, glm::vec3(snowx + 0.008, snowy + 0.049 , snowz + 0.023));
+	TR = glm::scale(TR, glm::vec3(0.015f, 0.015f, 0.015f));
+	glUniformMatrix4fv(modelLocation, 1, GL_FALSE, glm::value_ptr(TR));
+	glUniform3f(vColorLocation, 0.0f, 0.0f, 0.0f);
+	gluQuadricDrawStyle(wbody, GLU_FILL);
+	gluSphere(whead, 0.2, 50, 50); // ëˆˆ ì˜¤
+
+	TR = glm::mat4(1.0f);
+	TR = glm::translate(TR, glm::vec3(snowx, snowy + 0.039, snowz + 0.023));
+	TR = glm::scale(TR, glm::vec3(0.025f, 0.025f, 0.025f));
+	glUniformMatrix4fv(modelLocation, 1, GL_FALSE, glm::value_ptr(TR));
+	glUniform3f(vColorLocation, 1.0f, 0.388235f, 0.278431f);
+	gluQuadricDrawStyle(wbody, GLU_FILL);
+	gluSphere(whead, 0.2, 50, 50); //  ì½”
+
+	if (bjump) {
+		lEffect.x = snowx - 0.04;
+		lEffect.y = snowy - 0.035;
+		lEffect.z = snowz + 0.026;
+				   
+		rEffect.x = snowx + 0.04;
+		rEffect.y = snowy - 0.035;
+		rEffect.z = snowz;
+		
+		TR = glm::mat4(1.0f);
+		TR = glm::translate(TR, glm::vec3(lEffect.x, lEffect.y, lEffect.z));
+		TR = glm::scale(TR, glm::vec3(0.025f, 0.025f, 0.025f));
+		glUniformMatrix4fv(modelLocation, 1, GL_FALSE, glm::value_ptr(TR));
+		glUniform3f(vColorLocation, 0.827451, 0.827451, 0.827451);
+		gluQuadricDrawStyle(wbody, GLU_FILL);
+		gluSphere(wbody, 0.2, 50, 50); // ì í”„í• ë•Œ ì´í™íŠ¸ ì™¼ìª½
+		TR = glm::mat4(1.0f);
+		TR = glm::translate(TR, glm::vec3(rEffect.x, rEffect.y, rEffect.z));
+		TR = glm::scale(TR, glm::vec3(0.025f, 0.025f, 0.025f));
+		glUniformMatrix4fv(modelLocation, 1, GL_FALSE, glm::value_ptr(TR));
+		glUniform3f(vColorLocation, 0.827451, 0.827451, 0.827451);
+		gluQuadricDrawStyle(wbody, GLU_FILL);
+		gluSphere(wbody, 0.2, 50, 50); // ì í”„í• ë•Œ ì´í™íŠ¸ ì˜¤ë¥¸ìª½
+	}
+
+	//ê°ë„ëŠ” 0ë„ë‘ 90ë„ ë°˜ë³µ - ì§€ê·¸ì¬ê·¸ì´ë¯€ë¡œ
+	//ì½”ë“œ ê¸¸ ì‹œì‘!!!! saveroad ì½”ë“œë¶€ë¶„ xì™€ z 0ë„ì¼ë•Œë‘ 90ë„ì¼ë•Œ ì½”ë“œê°€ ë‹¤ë¦„!!
 	//saveroad - x 
-	// ÇöÀç°¡ saveroad[1]ÀÌ¶ó°í ÃÆÀ» ¶§
-	//1. saveroad[0] + 1¹øÂ° ºÎºĞÀÇ zÃà scale¹İ°ª	   + 0¹øÂ° ºÎºĞÀÇ xÃà scaleÀÇ ¹İ°ª  - 90µµ
-	//2. saveroad[0] + 0¹øÂ° ºÎºĞÀÇ zÃà scaleÀÇ ¹İ°ª - 1¹øÂ° ºÎºĞÀÇ xÃà scale ¹İ°ª - 0µµ
+	// í˜„ì¬ê°€ saveroad[1]ì´ë¼ê³  ì³¤ì„ ë•Œ
+	//1. saveroad[0] + 1ë²ˆì§¸ ë¶€ë¶„ì˜ zì¶• scaleë°˜ê°’	   + 0ë²ˆì§¸ ë¶€ë¶„ì˜ xì¶• scaleì˜ ë°˜ê°’  - 90ë„
+	//2. saveroad[0] + 0ë²ˆì§¸ ë¶€ë¶„ì˜ zì¶• scaleì˜ ë°˜ê°’ - 1ë²ˆì§¸ ë¶€ë¶„ì˜ xì¶• scale ë°˜ê°’ - 0ë„
 
 	//saveroaed - z
-	//1. saveroad[0] + 0¹øÂ° ºÎºĞÀÇ zÃà scale ¹İ°ª + 1¹øÂ° ºÎºĞÀÇ xÃà scale ¹İ°ª - 90µµ
-	//2. saveroad[0] + 0¹øÂ° ºÎºĞÀÇ xÃà scale ¹İ°ª + 1¹øÂ° ºÎºĞÀÇ zÃà scale ¹İ°ª - 0µµ
+	//1. saveroad[0] + 0ë²ˆì§¸ ë¶€ë¶„ì˜ zì¶• scale ë°˜ê°’ + 1ë²ˆì§¸ ë¶€ë¶„ì˜ xì¶• scale ë°˜ê°’ - 90ë„
+	//2. saveroad[0] + 0ë²ˆì§¸ ë¶€ë¶„ì˜ xì¶• scale ë°˜ê°’ + 1ë²ˆì§¸ ë¶€ë¶„ì˜ zì¶• scale ë°˜ê°’ - 0ë„
 
-	//Ä«¸Ş¶ó À§Ä¡ º¯È¯ÇÏ°í ½ÍÀ»¶§´Â 
-	//glm::vec3 cameraPos = glm::vec3(1.5f, 1.5f, 1.5f);   ----- ÀÌºÎºĞÀÇ zÃà ÄÚµå Å©±â Áõ°¨ÇÏ¸é¼­ È®ÀÎ
-	//glm::vec3 cameraDirection = glm::vec3(-1.5f, -1.5f, -1.5f);  --- ÀÌºÎºĞÀº ±× ¾Õ¿¡²¨ÀÇ ¹İ´ëÀÇ ºÎÈ£·Î zÃà °ª º¯°æÇØÁÖ±â(À§¿¡ °ªÀ» º¯°æÇßÀ» ¶§¸¸)
-	
-	//lightÀ§Ä¡ ¹Ù²Ù°í ½ÍÀ¸¸é 
-	//snowx°ª°ú snowz°ª ¹Ù²Ù¸é¼­ ºû °á°ú È®ÀÎÇØº¸±â
+	//ì¹´ë©”ë¼ ìœ„ì¹˜ ë³€í™˜í•˜ê³  ì‹¶ì„ë•ŒëŠ” 
+	//glm::vec3 cameraPos = glm::vec3(1.5f, 1.5f, 1.5f);   ----- ì´ë¶€ë¶„ì˜ zì¶• ì½”ë“œ í¬ê¸° ì¦ê°í•˜ë©´ì„œ í™•ì¸
+	//glm::vec3 cameraDirection = glm::vec3(-1.5f, -1.5f, -1.5f);  --- ì´ë¶€ë¶„ì€ ê·¸ ì•ì—êº¼ì˜ ë°˜ëŒ€ì˜ ë¶€í˜¸ë¡œ zì¶• ê°’ ë³€ê²½í•´ì£¼ê¸°(ìœ„ì— ê°’ì„ ë³€ê²½í–ˆì„ ë•Œë§Œ)
 
-	saveroad[0].x = 0.0f; //scale¿¡¼­ xºÎºĞÀÇ ¹İ°ª ±â·ÏÇØµÎ±â
-	saveroad[0].z = 0.0f; //scale¿¡¼­ zºÎºĞÀÇ ¹İ°ª ±â·ÏÇØµÎ±â
+	//lightìœ„ì¹˜ ë°”ê¾¸ê³  ì‹¶ìœ¼ë©´ 
+	//snowxê°’ê³¼ snowzê°’ ë°”ê¾¸ë©´ì„œ ë¹› ê²°ê³¼ í™•ì¸í•´ë³´ê¸°
+
+	saveroad[0].x = 0.0f; //scaleì—ì„œ xë¶€ë¶„ì˜ ë°˜ê°’ ê¸°ë¡í•´ë‘ê¸°
+	saveroad[0].z = 0.0f; //scaleì—ì„œ zë¶€ë¶„ì˜ ë°˜ê°’ ê¸°ë¡í•´ë‘ê¸°
 	TR = glm::mat4(1.0f);
-	TR = glm::scale(TR, glm::vec3(rxsize * 2, 0.01f, 1.0f));
+	TR = glm::scale(TR, glm::vec3(rxsize * 2, 0.01f, rzsize[0] * 2));
 	glUniformMatrix4fv(modelLocation, 1, GL_FALSE, glm::value_ptr(TR));
 	glUniform3f(vColorLocation, 0.7f, 0.7f, 0.7f);
 	for (int i = 0; i < 12; ++i) {
 		Road[0][i].Bind();
 		Road[0][i].Draw();
-	} //±æ1
-	TR = glm::mat4(1.0f);
-	saveroad[1].x = saveroad[0].x + 0.15f + rxsize;
-	saveroad[1].z = saveroad[0].z + 0.5f - rxsize;
-	TR = glm::translate(TR, glm::vec3(-saveroad[1].x, 0.0f, -saveroad[1].z));
-	TR = glm::rotate(TR, (float)glm::radians(90.0), glm::vec3(0.0f, 1.0f, 0.0f));
-	TR = glm::scale(TR, glm::vec3(rxsize * 2, 0.01f, 0.3f));
-	glUniformMatrix4fv(modelLocation, 1, GL_FALSE, glm::value_ptr(TR));
-	glUniform3f(vColorLocation, 0.7f, 0.7f, 0.7f);
-	for (int i = 0; i < 12; ++i) {
-		Road[1][i].Bind();
-		Road[1][i].Draw();
-	} //±æ2
-	TR = glm::mat4(1.0f);
-	saveroad[2].x = saveroad[1].x + 0.15f - rxsize;
-	saveroad[2].z = saveroad[1].z + 0.15f + rxsize;
-	TR = glm::translate(TR, glm::vec3(-saveroad[2].x, 0.0f, -saveroad[2].z));
-	TR = glm::rotate(TR, (float)glm::radians(0.0), glm::vec3(0.0f, 1.0f, 0.0f));
-	TR = glm::scale(TR, glm::vec3(0.14f, 0.01f, 0.3f));
-	glUniformMatrix4fv(modelLocation, 1, GL_FALSE, glm::value_ptr(TR));
-	glUniform3f(vColorLocation, 0.7f, 0.7f, 0.7f);
-	for (int i = 0; i < 12; ++i) {
-		Road[2][i].Bind();
-		Road[2][i].Draw();
-	} //±æ3
-	TR = glm::mat4(1.0f);
-	saveroad[3].x = saveroad[2].z + 0.25f + rxsize;
-	saveroad[3].z = saveroad[2].z + 0.15f - rxsize;
-	TR = glm::translate(TR, glm::vec3(-saveroad[3].x + 0.5, 0.0f, -saveroad[3].z));
-	TR = glm::rotate(TR, (float)glm::radians(90.0), glm::vec3(0.0f, 1.0f, 0.0f));
-	TR = glm::scale(TR, glm::vec3(0.14f, 0.01f, 0.2f));
-	glUniformMatrix4fv(modelLocation, 1, GL_FALSE, glm::value_ptr(TR));
-	glUniform3f(vColorLocation, 0.7f, 0.7f, 0.7f);
-	for (int i = 0; i < 12; ++i) {
-		Road[3][i].Bind();
-		Road[3][i].Draw();
-	} //±æ4
-	TR = glm::mat4(1.0f);
-	saveroad[4].x = saveroad[3].x + 0.1f - rxsize;
-	saveroad[4].z = saveroad[3].z + 0.07f + rxsize;
-	TR = glm::translate(TR, glm::vec3(-saveroad[4].x + 0.5, 0.0f, -saveroad[4].z));
-	TR = glm::rotate(TR, (float)glm::radians(0.0), glm::vec3(0.0f, 1.0f, 0.0f));
-	TR = glm::scale(TR, glm::vec3(0.14f, 0.01f, 0.14f));
-	glUniformMatrix4fv(modelLocation, 1, GL_FALSE, glm::value_ptr(TR));
-	glUniform3f(vColorLocation, 0.7f, 0.7f, 0.7f);
-	for (int i = 0; i < 12; ++i) {
-		Road[4][i].Bind();
-		Road[4][i].Draw();
-	} //±æ5
-	TR = glm::mat4(1.0f);
-	saveroad[5].x = saveroad[4].x - 0.44f + rxsize;
-	saveroad[5].z = saveroad[4].z + 0.07f - rxsize;
-	TR = glm::translate(TR, glm::vec3(-saveroad[5].x, 0.0f, -saveroad[5].z));
-	TR = glm::rotate(TR, (float)glm::radians(90.0), glm::vec3(0.0f, 1.0f, 0.0f));
-	TR = glm::scale(TR, glm::vec3(0.14f, 0.01f, 0.15f));
-	glUniformMatrix4fv(modelLocation, 1, GL_FALSE, glm::value_ptr(TR));
-	glUniform3f(vColorLocation, 0.7f, 0.7f, 0.7f);
-	for (int i = 0; i < 12; ++i) {
-		Road[5][i].Bind();
-		Road[5][i].Draw();
-	} //±æ6
-	TR = glm::mat4(1.0f);
-	saveroad[6].x = saveroad[5].x + 0.075f - rxsize;
-	saveroad[6].z = saveroad[5].z + 0.07f + rxsize;
-	TR = glm::translate(TR, glm::vec3(-saveroad[6].x, 0.0f, -saveroad[6].z));
-	TR = glm::rotate(TR, (float)glm::radians(0.0), glm::vec3(0.0f, 1.0f, 0.0f));
-	TR = glm::scale(TR, glm::vec3(0.14f, 0.01f, 0.15f));
-	glUniformMatrix4fv(modelLocation, 1, GL_FALSE, glm::value_ptr(TR));
-	glUniform3f(vColorLocation, 0.7f, 0.7f, 0.7f);
-	for (int i = 0; i < 12; ++i) {
-		Road[6][i].Bind();
-		Road[6][i].Draw();
-	} // ±æ7
-	TR = glm::mat4(1.0f);
-	saveroad[7].x = saveroad[6].x + 0.12f + rxsize;
-	saveroad[7].z = saveroad[6].z + 0.076f - rxsize;
-	TR = glm::translate(TR, glm::vec3(-saveroad[7].x, 0.0f, -saveroad[7].z));
-	TR = glm::rotate(TR, (float)glm::radians(90.0), glm::vec3(0.0f, 1.0f, 0.0f));
-	TR = glm::scale(TR, glm::vec3(0.14f, 0.01f, 0.29f));
-	glUniformMatrix4fv(modelLocation, 1, GL_FALSE, glm::value_ptr(TR));
-	glUniform3f(vColorLocation, 0.7f, 0.7f, 0.7f);
-	for (int i = 0; i < 12; ++i) {
-		Road[7][i].Bind();
-		Road[7][i].Draw();
-	} //±æ8
-	TR = glm::mat4(1.0f);
-	saveroad[8].x = saveroad[7].x + 0.145f - rxsize;
-	saveroad[8].z = saveroad[7].z + 0.08f + rxsize;
-	TR = glm::translate(TR, glm::vec3(-saveroad[8].x, 0.0f, -saveroad[8].z));
-	TR = glm::rotate(TR, (float)glm::radians(0.0), glm::vec3(0.0f, 1.0f, 0.0f));
-	TR = glm::scale(TR, glm::vec3(0.14f, 0.01f, 0.31f));
-	glUniformMatrix4fv(modelLocation, 1, GL_FALSE, glm::value_ptr(TR));
-	glUniform3f(vColorLocation, 0.7f, 0.7f, 0.7f);
-	for (int i = 0; i < 12; ++i) {
-		Road[8][i].Bind();
-		Road[8][i].Draw();
-	} //±æ9
+	} //ê¸¸1	
 
+	for (int j = 1; j < 80; ++j)
+	{
+		if (j % 2 == 1) {
+			saveroad[j].x = saveroad[j - 1].x + rzsize[j] + rxsize;
+			saveroad[j].z = saveroad[j - 1].z + rzsize[j - 1] - rxsize;
+		}
+		else {
+			saveroad[j].x = saveroad[j - 1].x + rzsize[j - 1] - rxsize;
+			saveroad[j].z = saveroad[j - 1].z + rzsize[j] + rxsize;
+		}
+		TR = glm::mat4(1.0f);
+		TR = glm::translate(TR, glm::vec3(-saveroad[j].x, 0.01f, -saveroad[j].z));
+		if (j % 2 == 1)
+			TR = glm::rotate(TR, (float)glm::radians(90.0), glm::vec3(0.0f, 1.0f, 0.0f));
+		TR = glm::scale(TR, glm::vec3(rxsize * 2, 0.01f, rzsize[j] * 2));
+		glUniformMatrix4fv(modelLocation, 1, GL_FALSE, glm::value_ptr(TR));
+		glUniform3f(vColorLocation, 0.7f, 0.7f, 0.7f);
+		for (int i = 0; i < 12; ++i) {
+			Road[j][i].Bind();
+			Road[j][i].Draw();
+		} // ë‚˜ë¨¸ì§€ ê¸¸
+	}
+	
 
 	glutSwapBuffers();
 	glutPostRedisplay();
 }
 
-GLvoid Reshape(int w, int h) //--- Äİ¹é ÇÔ¼ö: ´Ù½Ã ±×¸®±â Äİ¹é ÇÔ¼ö
+GLvoid Reshape(int w, int h) //--- ì½œë°± í•¨ìˆ˜: ë‹¤ì‹œ ê·¸ë¦¬ê¸° ì½œë°± í•¨ìˆ˜
 {
 	glViewport(0, 0, w, h);
 }
@@ -570,13 +615,22 @@ void keyboard(unsigned char key, int x, int y) {
 	case 'a':
 		leftright = !leftright;
 		break;
-	case 'p': // ÇÃ·¹ÀÌ
+	case 32:
+		bjump = true;
+		cout << "jump" << endl;	
+		break;
+	case 'p': // í”Œë ˆì´
 		music = true;
 		Playmusic();
 		break;
-	case 'q': // Á¾·á
-		glutLeaveMainLoop();
+	case 'c':	// ìœ„ì¹˜ í™•ì¸ìš© ì¹´ë©”ë¼ yì¶• == 0 ì¼ ë•Œ
+		cameracheck = true;
 		break;
+	case 'x':	// ìœ„ì¹˜ í™•ì¸ìš© ì¹´ë©”ë¼ (ê¸°ì¡´ ì¹´ë©”ë¼) 
+		cameracheck = false;
+		break;
+	case 'q': // ì¢…ë£Œ
+		glutLeaveMainLoop();
 	}
 	glutPostRedisplay();
 }
@@ -586,23 +640,37 @@ void TimerFunction(int value) {
 		snowposxz[i].y -= snowposxz[i].speed;
 		if (snowposxz[i].y <= -0.5f)
 			snowposxz[i].y = 1.5f;
-	}
+	} // ëˆˆë‚´ë¦¬ê¸°
 
-	if (music)
-	{
+	if (music) {
 		if (!leftright) {
-			snowz -= 0.01; // z ÃàÀÌµ¿
+			snowz -= 0.01; // z ì¶•ì´ë™
 			for (int i = 0; i < snowsize; ++i)
-				snowposxz[i].z -= 0.01; // ´« À§Ä¡ ÀÌµ¿
+				snowposxz[i].z -= 0.01; // ëˆˆ ìœ„ì¹˜ ì´ë™
 		}
 		else {
-			snowx -= 0.01; // xÃàÀÌµ¿
+			snowx -= 0.01; // xì¶•ì´ë™
 			for (int i = 0; i < snowsize; ++i)
 				snowposxz[i].x -= 0.01;
 		}
 
 	}
-	
+	if (bjump) {
+		if (jumpcount < 10) {
+			snowy += 0.01;
+			lEffect.x += 0.04;
+		}					
+		else if (jumpcount < 20) {
+			snowy -= 0.01;
+			lEffect.x -= 0.04;
+		}			
+		else {
+			bjump = false;
+			jumpcount = -1;
+		}
+		++jumpcount;
+	}
+
 	glutPostRedisplay();
 	glutTimerFunc(5, TimerFunction, 1);
 }
@@ -610,7 +678,7 @@ void TimerFunction(int value) {
 void Playmusic() {
 
 	cout << "----playing----" << endl;
-	PlaySound(L"music.wav", 0, SND_FILENAME | SND_ASYNC);
+	PlaySound(L"music1.wav", 0, SND_FILENAME | SND_ASYNC);
 }
 
 GLchar* filetobuf(const char* file) {
@@ -633,7 +701,7 @@ GLchar* filetobuf(const char* file) {
 void ReadObj(FILE* objFile)
 {
 	faceNum = 0;
-	//--- 1. ÀüÃ¼ ¹öÅØ½º °³¼ö ¹× »ï°¢Çü °³¼ö ¼¼±â
+	//--- 1. ì „ì²´ ë²„í…ìŠ¤ ê°œìˆ˜ ë° ì‚¼ê°í˜• ê°œìˆ˜ ì„¸ê¸°
 	char count[100];
 	char bind[100];
 	int vertexNum = 0;
@@ -664,6 +732,86 @@ void ReadObj(FILE* objFile)
 			int x = face[faceIndex].x - 1, y = face[faceIndex].y - 1, z = face[faceIndex].z - 1;
 			faceIndex++;
 		}
+	}
+}
+
+
+void ReadObj2(string file, vector<glm::vec3>& vertexInfo)
+{
+	vector<glm::vec3> vertex;
+	vector<glm::vec3> vNormal;
+
+	vector<glm::ivec3> vFace;
+	vector<glm::ivec3> vnFace;
+
+	ifstream in(file);
+	if (!in) {
+		cout << "OBJ File NO Have" << endl;
+		return;
+	}
+
+	while (in) {
+		string temp;
+		getline(in, temp);
+
+		if (temp[0] == 'v' && temp[1] == ' ') {
+			istringstream slice(temp);
+
+			glm::vec3 vertemp;
+			char tmpword;
+			slice >> tmpword >> vertemp.x >> vertemp.y >> vertemp.z;
+
+			vertex.push_back(vertemp);
+		}
+
+		else if (temp[0] == 'v' && temp[1] == 'n' && temp[2] == ' ') {
+			istringstream slice(temp);
+
+			glm::vec3 vertemp;
+			string tmpword;
+			slice >> tmpword >> vertemp.x >> vertemp.y >> vertemp.z;
+
+			vNormal.push_back(vertemp);
+		}
+
+		else if (temp[0] == 'f' && temp[1] == ' ') {
+			istringstream slice(temp);
+
+			glm::ivec3 vfacetemp;
+			glm::ivec3 vnfacetemp;
+			for (int i = -1; i < 3; ++i) {
+				string word;
+				getline(slice, word, ' ');
+				if (i == -1) continue;						// f ì½ì„ë• ê±´ë„ˆë›´ë‹¤
+				if (word.find("/") != string::npos) {
+					istringstream slash(word);
+					string slashtmp;
+					getline(slash, slashtmp, '/');
+
+					vfacetemp[i] = atoi(slashtmp.c_str()) - 1;			//f ì½ì„ë• ì²«ë²ˆì§¸ê°’ë§Œ(v)	//ë°°ì—´ì¸ë±ìŠ¤ ì“¸ê±°ë¼ -1í•´ì¤Œ
+
+					getline(slash, slashtmp, '/');
+					getline(slash, slashtmp, '/');
+					vnfacetemp[i] = atoi(slashtmp.c_str()) - 1;
+				}
+				else {
+					vfacetemp[i] = atoi(word.c_str()) - 1;			//f ì½ì„ë• ì²«ë²ˆì§¸ê°’ë§Œ(v)	//ë°°ì—´ì¸ë±ìŠ¤ ì“¸ê±°ë¼ -1í•´ì¤Œ
+				}
+			}
+			vFace.push_back(vfacetemp);
+			vnFace.push_back(vnfacetemp);
+		}
+	}
+
+	for (int i = 0; i < vFace.size(); ++i) {
+		vertexInfo.push_back(vertex[vFace[i].x]);
+		vertexInfo.push_back(vNormal[vnFace[i].x]);
+
+		vertexInfo.push_back(vertex[vFace[i].y]);
+		vertexInfo.push_back(vNormal[vnFace[i].y]);
+
+		vertexInfo.push_back(vertex[vFace[i].z]);
+		vertexInfo.push_back(vNormal[vnFace[i].z]);
 	}
 }
 
@@ -733,7 +881,7 @@ void planecolorset(Plane* p, int a) {
 //for (int i = 0; i < 12; ++i) {
 //	Road[2][i].Bind();
 //	Road[2][i].Draw();
-//} //±æÅ×µÎ¸®¿Ş
+//} //ê¸¸í…Œë‘ë¦¬ì™¼
 //TR = glm::mat4(1.0f);
 //TR = glm::translate(TR, glm::vec3(0.125f, 0.0125f, -0.125f));
 //TR = glm::scale(TR, glm::vec3(0.025f, 0.025f, 1.25f));
@@ -742,4 +890,4 @@ void planecolorset(Plane* p, int a) {
 //for (int i = 0; i < 12; ++i) {
 //	Road[3][i].Bind();
 //	Road[3][i].Draw();
-//} //±æÅ×µÎ¸®¿À
+//} //ê¸¸í…Œë‘ë¦¬ì˜¤
